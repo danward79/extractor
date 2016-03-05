@@ -7,56 +7,62 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
-//ParseTarReader loops through a tar.Reader and creates the file or folder.
-func ParseTarReader(tarReader *tar.Reader, destination string) error {
+//Extract ...
+func Extract(source, dest string) error {
 
-	fmt.Println("ParseTarReader")
-
-	for {
-		fmt.Println("For")
-		hdr, err := tarReader.Next()
-		fmt.Println(hdr)
-		if err == io.EOF {
-			fmt.Println("io.EOF")
-			break
-		} else if err != nil {
-			return fmt.Errorf("Tar Header Error: %v", err)
-		}
-
-		fmt.Println(hdr.Name)
-		path := filepath.Join(destination, hdr.Name)
-		info := hdr.FileInfo()
-
-		switch {
-
-		case info.IsDir():
-			fmt.Println("IsDir")
-			if err = os.MkdirAll(path, info.Mode()); err != nil {
-				return fmt.Errorf("Error generating folder: %v", err)
-			}
-			continue
-
-		case strings.HasSuffix(info.Name(), ".gz") && !strings.HasPrefix(info.Name(), "."):
-			fmt.Println(".gz")
-			err = gzDecompress(tarReader, hdr, path)
-			if err != nil {
-				return err
-			}
-
-		case strings.HasSuffix(info.Name(), ".tar"):
-			fmt.Println(".tar")
-			err := copyReaderFile(tarReader, hdr, path)
-			if err != nil {
-				return err
-			}
-
-		}
+	//Chk the destination path is present and create if not
+	err := os.MkdirAll(dest, os.ModeDir|os.ModePerm)
+	if err != nil {
+		return fmt.Errorf("Destination path: , %v", err)
 	}
-	return nil
+
+	f, err := os.Open(source)
+	if err != nil {
+		return fmt.Errorf("Open File: %v", err)
+	}
+	defer f.Close()
+
+	fi, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("File info: %v", err)
+	}
+
+	switch {
+	case strings.HasSuffix(fi.Name(), ".gz"):
+
+		ar, err := gzip.NewReader(f)
+		if err != nil {
+			return fmt.Errorf("Gzip reader: %v", err)
+		}
+		defer ar.Close()
+
+		fmt.Println("ar.Hdr.Name:", ar.Header.Name)
+
+		if strings.HasSuffix(ar.Header.Name, ".tar") { //|| ar.Header.Name == "" {
+			fmt.Println("gz >.tar")
+
+			tr := tar.NewReader(ar)
+			return tarParse(tr, dest)
+		}
+		fmt.Println("gz >gz")
+
+		path := filepath.Join(dest, strings.TrimSuffix(fi.Name(), ".gz"))
+		return toFile(ar, path)
+
+	case strings.HasSuffix(fi.Name(), ".tar"):
+		fmt.Println("tar branch", fi.Name())
+		tr := tar.NewReader(f)
+
+		return tarParse(tr, dest)
+
+	default:
+		return fmt.Errorf("Extract - Unknown file type: %v", fi.Name())
+	}
 }
 
 //gzDecompress handler to expand .gz files
@@ -85,23 +91,78 @@ func gzDecompress(r io.Reader, hdr *tar.Header, path string) error {
 		return fmt.Errorf("Gzip reader: %v", err)
 	}
 
-	return copyReaderFile(gzReader, hdr, path)
-
+	return toFile(gzReader, path)
 }
 
-//copyReaderFile handles file generation and copying reader content to file.
-func copyReaderFile(r io.Reader, hdr *tar.Header, path string) error {
+//toFile ...
+func toFile(r io.Reader, dest string) error {
 
-	info := hdr.FileInfo()
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode())
+	w, err := os.Create(dest)
 	if err != nil {
 		return fmt.Errorf("Open file error: %v", err)
 	}
-	defer file.Close()
+	defer w.Close()
 
-	_, err = io.Copy(file, r)
+	_, err = io.Copy(w, r)
 	if err != nil {
 		return fmt.Errorf("Copy file error: %v", err)
+	}
+
+	return nil
+}
+
+//tarParse ...
+func tarParse(tr *tar.Reader, dest string) error {
+
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		fi := hdr.FileInfo()
+		//path := filepath.Join(dest, fi.Name())
+		path := filepath.Join(dest, hdr.Name)
+
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+
+			//if hdr.Name != fi.Name()+"/" {
+
+			if err = os.MkdirAll(path, fi.Mode()); err != nil {
+				return err
+			}
+			//}
+
+			continue
+
+		case tar.TypeReg:
+
+			if !strings.HasPrefix(fi.Name(), ".") {
+
+				err = gzDecompress(tr, hdr, path)
+				if err != nil {
+					return err
+				}
+			}
+
+		}
+
+	}
+	return nil
+}
+
+//ExtractTarGz extract a source .tar.gz file to a dest
+func ExtractTarGz(source, dest string) error {
+	cmd := exec.Command("tar", "-xf", source, "-C", dest)
+	var out bytes.Buffer
+	cmd.Stderr = &out
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("Extract error:\n%v", cmd.Stderr)
 	}
 
 	return nil

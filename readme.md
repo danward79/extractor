@@ -1,1 +1,1 @@
-extract .gz and .tar files
+extract .tar.gz files
