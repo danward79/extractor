@@ -41,21 +41,17 @@ func Extract(source, dest string) error {
 		}
 		defer ar.Close()
 
-		fmt.Println("ar.Hdr.Name:", ar.Header.Name)
-
 		if strings.HasSuffix(ar.Header.Name, ".tar") { //|| ar.Header.Name == "" {
-			fmt.Println("gz >.tar")
 
 			tr := tar.NewReader(ar)
 			return tarParse(tr, dest)
 		}
-		fmt.Println("gz >gz")
 
 		path := filepath.Join(dest, strings.TrimSuffix(fi.Name(), ".gz"))
 		return toFile(ar, path)
 
 	case strings.HasSuffix(fi.Name(), ".tar"):
-		fmt.Println("tar branch", fi.Name())
+
 		tr := tar.NewReader(f)
 
 		return tarParse(tr, dest)
